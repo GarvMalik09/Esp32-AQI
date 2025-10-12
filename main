@@ -6,8 +6,8 @@
 #include <DHT.h>
 
 // WiFi and sensor configuration
-const char* ssid = "********";
-const char* password = "********";
+const char* ssid = "Malik HSPT";
+const char* password = "84e91ce5fe5a";
 const int mq135Pin = 34;
 #define DHTPIN 4
 #define DHTTYPE DHT11
@@ -57,7 +57,7 @@ void handleRoot() {
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ESP32 Clean Sensor Dashboard</title>
+<title>Garv Malik's ESP32 Clean Sensor Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   body { font-family: 'Roboto', Arial, sans-serif; margin: 0; background: #f6f7fb; color: #23282c; }
@@ -85,7 +85,7 @@ void handleRoot() {
 </style>
 </head>
 <body>
-<header>ESP32 Sensor Trends</header>
+<header>Garv Malik's ESP32 Clean Sensor Dashboard</header>
 <main>
   <div class="panel">
     <h2>Performance Trends</h2>
@@ -116,7 +116,6 @@ const mq135Ctx     = document.getElementById('mq135Chart').getContext('2d');
 const tempCtx      = document.getElementById('tempChart').getContext('2d');
 const humidCtx     = document.getElementById('humidityChart').getContext('2d');
 
-// Main multi-metric chart (two axis)
 const allTrendsChart = new Chart(allTrendsCtx, {
   type: 'line',
   data: {
@@ -190,7 +189,6 @@ const allTrendsChart = new Chart(allTrendsCtx, {
   }
 });
 
-// Separate graphs for each metric
 function makeSingleLineChart(ctx, label, color) {
   return new Chart(ctx, {
     type: 'line',
@@ -236,7 +234,6 @@ async function fetchSensorData() {
     const humidVal = parseFloat(parts[3]);
     let keep = 30;
 
-    // Multi-metric line chart
     if (allTrendsChart.data.labels.length >= keep) {
       allTrendsChart.data.labels.shift();
       allTrendsChart.data.datasets.forEach(ds => ds.data.shift());
@@ -247,7 +244,6 @@ async function fetchSensorData() {
     allTrendsChart.data.datasets[2].data.push(humidVal);
     allTrendsChart.update();
 
-    // Each individual line chart
     [ [mq135Chart,mq135Val], [tempChart,tempVal], [humidChart,humidVal] ].forEach(([chart,dataval]) => {
       if (chart.data.labels.length >= keep) {
         chart.data.labels.shift(); chart.data.datasets[0].data.shift();
