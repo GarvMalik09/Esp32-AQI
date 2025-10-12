@@ -5,19 +5,18 @@
 #include <time.h>
 #include <DHT.h>
 
-const char* ssid = "Malik HSPT";
-const char* password = "84e91ce5fe5a";
-
+// WiFi and sensor configuration
+const char* ssid = "********";
+const char* password = "********";
 const int mq135Pin = 34;
-const size_t MAX_CSV_SIZE = 50 * 1024; // 50 KB size limit
-
-#define DHTPIN 4         
-#define DHTTYPE DHT11    
+#define DHTPIN 4
+#define DHTTYPE DHT11
 DHT dht(DHTPIN, DHTTYPE);
 
 const char* ntpServer = "pool.ntp.org";
-const long  gmtOffset_sec = 19800;    
-const int   daylightOffset_sec = 0;
+const long gmtOffset_sec = 19800; // IST offset +5:30
+const int daylightOffset_sec = 0;
+const size_t MAX_CSV_SIZE = 50 * 1024; // 50 KB
 
 WebServer server(80);
 
@@ -27,7 +26,7 @@ void initSPIFFS() {
   }
 }
 
-void appendDataToFile(const String &dataLine) {
+void appendDataToFile(const String& dataLine) {
   if (SPIFFS.exists("/data.csv")) {
     File f = SPIFFS.open("/data.csv", "r");
     if (f.size() > MAX_CSV_SIZE) {
@@ -39,11 +38,11 @@ void appendDataToFile(const String &dataLine) {
     }
   }
   File file = SPIFFS.open("/data.csv", FILE_APPEND);
-  if(!file) {
+  if (!file) {
     Serial.println("Failed to open file for appending");
     return;
   }
-  if(file.print(dataLine)) {
+  if (file.print(dataLine)) {
     Serial.println("Data appended");
   } else {
     Serial.println("File write failed");
@@ -58,135 +57,171 @@ void handleRoot() {
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ESP32 Sensor Dashboard</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.3.0/dist/chart.umd.min.js"></script>
+<title>ESP32 Clean Sensor Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
-  body { font-family: 'Roboto', sans-serif; margin: 0; background: #f5f7fa; color: #333; }
-  header { background: #4285f4; color: white; padding: 1rem 2rem; font-size: 1.5rem; font-weight: 500; text-align: center; }
-  .top-stats, .stats { display: flex; flex-wrap: wrap; justify-content: space-around; gap: 1rem; max-width: 960px; margin: 1rem auto; }
-  .stat-item {
-    background: white;
-    padding: 1rem 1.5rem;
-    border-radius: 8px;
-    box-shadow: 0 1px 6px rgba(0,0,0,0.1);
-    text-align: center;
-    flex: 1 1 120px;
-    min-width: 120px;
+  body { font-family: 'Roboto', Arial, sans-serif; margin: 0; background: #f6f7fb; color: #23282c; }
+  header { background: #fff; color: #23282c; padding: 2rem 2rem 1rem 2rem; font-size: 2rem; font-weight: 700;
+           box-shadow: 0 3px 12px rgba(0,0,0,0.04); border-bottom: 1px solid #e3eaf1; letter-spacing: 0.01em;}
+  main { padding: 1rem; max-width: 1100px; margin: auto; }
+  .panel { background: #fff; border-radius: 14px; box-shadow: 0 2px 10px rgba(30,32,42,0.08); margin: 2rem 0; padding: 2rem 1.5rem 1.5rem 1.5rem;}
+  h2 { font-size: 1.25rem; font-weight: 500; color: #1a1c1f; margin-top: 0; margin-bottom: 1.5rem; letter-spacing: 0.01em;}
+  canvas { width: 100% !important; max-height: 350px !important; background: #fafbfc; border-radius: 8px; }
+  .legend { font-size: 1rem; margin-top: .5rem; }
+  .legend span { display: inline-block; margin-right: 1.5em; font-weight: 500; }
+  .legend .blue { color: #3b82f6; }
+  .legend .red   { color: #db4437; }
+  .legend .green { color: #27ae60; }
+  .download-btn {
+    display: inline-block;
+    margin: 1rem auto 2rem 0;  padding: 10px 26px; font-size: 1.1rem; background: #0860ca; color: white; font-weight: bold;
+    border: none; border-radius: 5px; box-shadow:0 2px 7px rgba(32,90,187,0.10); text-decoration: none; cursor: pointer;
+    transition: background 0.2s;
   }
-  .stat-item h2 {
-    margin: 0;
-    font-size: 1.75rem;
-  }
-  main { padding: 1rem 1rem 2rem 1rem; max-width: 960px; margin: auto; }
-  canvas { background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); width: 100% !important; height: 300px !important; margin-bottom: 1.5rem; }
-  a.download-btn {
-    display: block;
-    width: 100%;
-    max-width: 200px;
-    margin: 0 auto 2rem auto;
-    padding: 10px;
-    background: #4285f4;
-    color: white;
-    text-align: center;
-    text-decoration: none;
-    font-weight: bold;
-    border-radius: 5px;
-    box-shadow: 0 3px 6px rgba(66, 133, 244, 0.5);
-    transition: background-color 0.3s ease;
-  }
-  a.download-btn:hover {
-    background: #3367d6;
+  .download-btn:hover { background: #084887; }
+  @media (max-width: 700px) {
+    main, .panel { padding: 1rem 3vw; }
   }
 </style>
 </head>
 <body>
-<header>ESP32 Sensor Dashboard</header>
-
-<!-- Current values displayed at top -->
-<div class="top-stats">
-  <div class="stat-item">
-    <div>MQ135</div>
-    <h2 id="currentMQ135Top">0</h2>
-  </div>
-  <div class="stat-item">
-    <div>Temperature (°C)</div>
-    <h2 id="currentTempTop">0</h2>
-  </div>
-  <div class="stat-item">
-    <div>Humidity (%)</div>
-    <h2 id="currentHumidTop">0</h2>
-  </div>
-</div>
-
+<header>ESP32 Sensor Trends</header>
 <main>
-  <h2>Combined Sensors</h2>
-  <canvas id="combinedChart"></canvas>
-
-  <h2>Individual Sensors</h2>
-  <canvas id="mq135Chart"></canvas>
-  <canvas id="tempChart"></canvas>
-  <canvas id="humidityChart"></canvas>
-
-  <!-- Current values also shown at bottom -->
-  <div class="stats">
-    <div class="stat-item">
-      <div>MQ135</div>
-      <h2 id="currentMQ135">0</h2>
+  <div class="panel">
+    <h2>Performance Trends</h2>
+    <canvas id="allTrendsChart"></canvas>
+    <div class="legend">
+      <span class="blue">&#11044; Air Quality</span>
+      <span class="red">&#11044; Temperature (°C)</span>
+      <span class="green">&#11044; Humidity (%)</span>
     </div>
-    <div class="stat-item">
-      <div>Temperature (°C)</div>
-      <h2 id="currentTemp">0</h2>
-    </div>
-    <div class="stat-item">
-      <div>Humidity (%)</div>
-      <h2 id="currentHumid">0</h2>
-    </div>
+    <a href="/download" class="download-btn" download="sensor_data.csv">Download CSV Data</a>
   </div>
-
-  <a href="/download" class="download-btn" download="sensor_data.csv">Download CSV Data</a>
+  <div class="panel">
+    <h2>Air Quality (MQ135)</h2>
+    <canvas id="mq135Chart"></canvas>
+  </div>
+  <div class="panel">
+    <h2>Temperature (°C)</h2>
+    <canvas id="tempChart"></canvas>
+  </div>
+  <div class="panel">
+    <h2>Humidity (%)</h2>
+    <canvas id="humidityChart"></canvas>
+  </div>
 </main>
-
 <script>
-function createChart(ctx, datasets) {
+const allTrendsCtx = document.getElementById('allTrendsChart').getContext('2d');
+const mq135Ctx     = document.getElementById('mq135Chart').getContext('2d');
+const tempCtx      = document.getElementById('tempChart').getContext('2d');
+const humidCtx     = document.getElementById('humidityChart').getContext('2d');
+
+// Main multi-metric chart (two axis)
+const allTrendsChart = new Chart(allTrendsCtx, {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [
+      {
+        label: 'Air Quality',
+        yAxisID: "y", // left axis
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59,130,246,0.125)',
+        data: [],
+        fill: false,
+        tension: 0.38,
+        borderWidth: 2,
+        pointBackgroundColor: '#3b82f6',
+        pointRadius: 4,
+        pointHoverRadius: 6,
+      },
+      {
+        label: 'Temperature (°C)',
+        yAxisID: "y1", // right axis
+        borderColor: '#db4437',
+        backgroundColor: 'rgba(219,68,55,0.13)',
+        data: [],
+        fill: false,
+        tension: 0.38,
+        borderWidth: 2,
+        pointBackgroundColor: '#db4437',
+        pointRadius: 4,
+        pointHoverRadius: 6,
+      },
+      {
+        label: 'Humidity (%)',
+        yAxisID: "y1", // right axis
+        borderColor: '#27ae60',
+        backgroundColor: 'rgba(39,174,96,0.13)',
+        data: [],
+        fill: false,
+        tension: 0.38,
+        borderWidth: 2,
+        pointBackgroundColor: '#27ae60',
+        pointRadius: 4,
+        pointHoverRadius: 6,
+      }
+    ]
+  },
+  options: {
+    responsive: true,
+    plugins: {
+      legend: { display: false },
+      tooltip: { mode: 'index', intersect: false }
+    },
+    interaction: { mode: 'nearest', axis: 'x', intersect: false },
+    scales: {
+      x: {
+        title: { display: true, text: "Date/Time", font: {weight:"bold"}, color: "#23282c" },
+        ticks: { color: "#888", font: { size:13 }, maxTicksLimit:8 },
+        grid: { color: "#ececec", borderColor: "#ececec" }
+      },
+      y: {
+        position: 'left', title: {display:true, text:"AQ Sensor", padding:2, color:'#3b82f6', font:{weight:'bold'}},
+        grid: { color: "#ececec", },
+        ticks: { color: "#3b82f6", maxTicksLimit:7 }
+      },
+      y1: {
+        position: 'right', title: {display:true, text:"Temp & Humidity", padding:2, color:'#db4437', font:{weight:'bold'}},
+        grid: { drawOnChartArea: false },
+        ticks: { color: "#db4437", maxTicksLimit:7 }
+      }
+    }
+  }
+});
+
+// Separate graphs for each metric
+function makeSingleLineChart(ctx, label, color) {
   return new Chart(ctx, {
     type: 'line',
-    data: {
-      labels: [],
-      datasets: datasets
-    },
+    data: { labels: [], datasets: [{
+      label: label,
+      borderColor: color,
+      backgroundColor: color,
+      data: [],
+      fill: false,
+      tension: 0.4,
+      borderWidth: 2,
+      pointBackgroundColor: color,
+      pointRadius: 4,
+      pointHoverRadius: 6,
+    }]},
     options: {
       responsive: true,
-      animation: { duration: 500, easing: 'easeOutQuart' },
-      scales: {
-        x: { title: { display: true, text: 'Time' }, ticks: { maxTicksLimit: 10 } },
-        y: { beginAtZero: true }
+      plugins: {
+        legend: { display: false },
+        tooltip: { mode: 'index', intersect: false }
       },
-      plugins: { legend: { display: true }, tooltip: { mode: 'index' } }
+      scales: {
+        x: { grid: { color:"#ececec"}, ticks:{ maxTicksLimit:8, color:"#23282c", font:{size:13} } },
+        y: { grid: { color:"#ececec"}, ticks:{ color: color, maxTicksLimit:6 } }
+      }
     }
   });
 }
-
-const combinedCtx = document.getElementById('combinedChart').getContext('2d');
-const mq135Ctx = document.getElementById('mq135Chart').getContext('2d');
-const tempCtx = document.getElementById('tempChart').getContext('2d');
-const humidityCtx = document.getElementById('humidityChart').getContext('2d');
-
-const combinedDatasets = [
-  { label: 'MQ135 Sensor Value', borderColor: '#4285f4', backgroundColor: 'rgba(66,133,244,0.3)', data: [], fill: true, tension: 0.4, pointRadius: 0 },
-  { label: 'Temperature (°C)', borderColor: '#db4437', backgroundColor: 'rgba(219,68,55,0.3)', data: [], fill: true, tension: 0.4, pointRadius: 0 },
-  { label: 'Humidity (%)', borderColor: '#f4b400', backgroundColor: 'rgba(244,180,0,0.3)', data: [], fill: true, tension: 0.4, pointRadius: 0 }
-];
-
-const combinedChart = createChart(combinedCtx, combinedDatasets);
-const mq135Chart = createChart(mq135Ctx, [{
-  label: 'MQ135 Sensor Value', borderColor: '#4285f4', backgroundColor: 'rgba(66,133,244,0.3)', data: [], fill: true, tension: 0.4, pointRadius: 0
-}]);
-const tempChart = createChart(tempCtx, [{
-  label: 'Temperature (°C)', borderColor: '#db4437', backgroundColor: 'rgba(219,68,55,0.3)', data: [], fill: true, tension: 0.4, pointRadius: 0
-}]);
-const humidChart = createChart(humidityCtx, [{
-  label: 'Humidity (%)', borderColor: '#f4b400', backgroundColor: 'rgba(244,180,0,0.3)', data: [], fill: true, tension: 0.4, pointRadius: 0
-}]);
+const mq135Chart = makeSingleLineChart(mq135Ctx, "Air Quality", "#3b82f6");
+const tempChart  = makeSingleLineChart(tempCtx, "Temperature (°C)", "#db4437");
+const humidChart = makeSingleLineChart(humidCtx, "Humidity (%)", "#27ae60");
 
 async function fetchSensorData() {
   try {
@@ -199,57 +234,35 @@ async function fetchSensorData() {
     const mq135Val = parseFloat(parts[1]);
     const tempVal = parseFloat(parts[2]);
     const humidVal = parseFloat(parts[3]);
+    let keep = 30;
 
-    function updateChart(chart, val) {
-      if(chart.data.labels.length > 30){
-        chart.data.labels.shift();
-        chart.data.datasets[0].data.shift();
+    // Multi-metric line chart
+    if (allTrendsChart.data.labels.length >= keep) {
+      allTrendsChart.data.labels.shift();
+      allTrendsChart.data.datasets.forEach(ds => ds.data.shift());
+    }
+    allTrendsChart.data.labels.push(label);
+    allTrendsChart.data.datasets[0].data.push(mq135Val);
+    allTrendsChart.data.datasets[1].data.push(tempVal);
+    allTrendsChart.data.datasets[2].data.push(humidVal);
+    allTrendsChart.update();
+
+    // Each individual line chart
+    [ [mq135Chart,mq135Val], [tempChart,tempVal], [humidChart,humidVal] ].forEach(([chart,dataval]) => {
+      if (chart.data.labels.length >= keep) {
+        chart.data.labels.shift(); chart.data.datasets[0].data.shift();
       }
-      chart.data.labels.push(label);
-      chart.data.datasets[0].data.push(val);
-      chart.update();
-    }
-
-    if (combinedChart.data.labels.length > 30) {
-      combinedChart.data.labels.shift();
-    }
-    combinedChart.data.labels.push(label);
-
-    combinedChart.data.datasets[0].data.push(mq135Val);
-    if (combinedChart.data.datasets[0].data.length > 30) combinedChart.data.datasets[0].data.shift();
-
-    combinedChart.data.datasets[1].data.push(tempVal);
-    if (combinedChart.data.datasets[1].data.length > 30) combinedChart.data.datasets[1].data.shift();
-
-    combinedChart.data.datasets[2].data.push(humidVal);
-    if (combinedChart.data.datasets[2].data.length > 30) combinedChart.data.datasets[2].data.shift();
-
-    combinedChart.update();
-
-    updateChart(mq135Chart, mq135Val);
-    updateChart(tempChart, tempVal);
-    updateChart(humidChart, humidVal);
-
-    // Update values both top and bottom
-    document.getElementById("currentMQ135").textContent = mq135Val.toFixed(0);
-    document.getElementById("currentTemp").textContent = tempVal.toFixed(1);
-    document.getElementById("currentHumid").textContent = humidVal.toFixed(0);
-
-    document.getElementById("currentMQ135Top").textContent = mq135Val.toFixed(0);
-    document.getElementById("currentTempTop").textContent = tempVal.toFixed(1);
-    document.getElementById("currentHumidTop").textContent = humidVal.toFixed(0);
-
+      chart.data.labels.push(label); chart.data.datasets[0].data.push(dataval); chart.update();
+    });
   } catch (error) {
     console.error('Error fetching sensor data:', error);
   }
 }
-
 setInterval(fetchSensorData, 1000);
 </script>
 </body>
 </html>
 )rawliteral";
-
   server.send(200, "text/html", html);
 }
 
@@ -257,28 +270,22 @@ void handleSensor() {
   float temperature = dht.readTemperature();
   float humidity = dht.readHumidity();
   if (isnan(temperature) || isnan(humidity)) {
-    Serial.println("Failed to read from DHT sensor!");
     temperature = 0;
     humidity = 0;
   }
-  
   int mq135Value = analogRead(mq135Pin);
-
   struct tm timeinfo;
-  char timestamp[20];
+  char timestamp[24];
   if (!getLocalTime(&timeinfo)) {
-    Serial.println("Failed to obtain NTP time");
     unsigned long totalSeconds = millis() / 1000;
     unsigned long minutes = totalSeconds / 60;
     unsigned long seconds = totalSeconds % 60;
     sprintf(timestamp, "%02lu:%02lu", minutes, seconds);
   } else {
-    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &timeinfo);
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M", &timeinfo); // Date (hour:minute)
   }
-
   String dataLine = String(timestamp) + "," + String(mq135Value) + "," + String(temperature, 1) + "," + String(humidity, 0) + "\n";
   appendDataToFile(dataLine);
-
   server.send(200, "text/plain", String(timestamp) + "," + String(mq135Value) + "," + String(temperature, 1) + "," + String(humidity, 0));
 }
 
@@ -294,7 +301,6 @@ void handleDownload() {
 
 void setup() {
   Serial.begin(115200);
-
   initSPIFFS();
   dht.begin();
 
@@ -320,7 +326,6 @@ void setup() {
   server.on("/", handleRoot);
   server.on("/sensor", handleSensor);
   server.on("/download", handleDownload);
-
   server.begin();
 }
 
