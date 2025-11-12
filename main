@@ -1,5 +1,6 @@
 #include <WiFi.h>
 #include <WebServer.h>
+#include <ESPmDNS.h>
 #include <FS.h>
 #include <SPIFFS.h>
 #include <time.h>
@@ -14,16 +15,40 @@ const int mq135Pin = 34;
 DHT dht(DHTPIN, DHTTYPE);
 
 const char* ntpServer = "pool.ntp.org";
-const long gmtOffset_sec = 19800; // IST offset +5:30
+const long gmtOffset_sec = 19800;
 const int daylightOffset_sec = 0;
-const size_t MAX_CSV_SIZE = 50 * 1024; // 50 KB
+const size_t MAX_CSV_SIZE = 50 * 1024;
 
 WebServer server(80);
+
+#define RL_VALUE 10
+#define RO_CLEAN_AIR 3.6
 
 void initSPIFFS() {
   if (!SPIFFS.begin(true)) {
     Serial.println("Failed to mount SPIFFS");
   }
+}
+
+float getPPM(int analogValue) {
+  float ppm;
+  
+  if(analogValue < 500) {
+    ppm = map(analogValue, 100, 500, 100, 300);
+  } else if(analogValue < 1000) {
+    ppm = map(analogValue, 500, 1000, 300, 600);
+  } else if(analogValue < 1500) {
+    ppm = map(analogValue, 1000, 1500, 600, 1000);
+  } else if(analogValue < 2500) {
+    ppm = map(analogValue, 1500, 2500, 1000, 2500);
+  } else if(analogValue < 3500) {
+    ppm = map(analogValue, 2500, 3500, 2500, 5000);
+  } else {
+    ppm = 5000 + (analogValue - 3500);
+    if(ppm > 10000) ppm = 10000;
+  }
+  
+  return ppm;
 }
 
 void appendDataToFile(const String& dataLine) {
@@ -57,21 +82,43 @@ void handleRoot() {
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Garv Malik's ESP32 Clean Sensor Dashboard</title>
+<title>A.T.M.O.S - Air Quality Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   body { font-family: 'Roboto', Arial, sans-serif; margin: 0; background: #f6f7fb; color: #23282c; }
-  header { background: #fff; color: #23282c; padding: 2rem 2rem 1rem 2rem; font-size: 2rem; font-weight: 700;
-           box-shadow: 0 3px 12px rgba(0,0,0,0.04); border-bottom: 1px solid #e3eaf1; letter-spacing: 0.01em;}
+  header { background: #fff; color: #23282c; padding: 1.5rem 2rem; box-shadow: 0 3px 12px rgba(0,0,0,0.04); border-bottom: 1px solid #e3eaf1;}
+  .header-container { display: flex; justify-content: space-between; align-items: center; max-width: 1100px; margin: auto; }
+  .title-section { }
+  .title { font-size: 2.5rem; font-weight: 700; letter-spacing: 0.02em; margin: 0; }
+  .subtitle { font-size: 0.85rem; color: #666; margin-top: 0.3rem; font-weight: 400; font-style: italic; }
+  .authors { font-size: 1rem; color: #333; font-weight: 700; text-align: right; }
   main { padding: 1rem; max-width: 1100px; margin: auto; }
   .panel { background: #fff; border-radius: 14px; box-shadow: 0 2px 10px rgba(30,32,42,0.08); margin: 2rem 0; padding: 2rem 1.5rem 1.5rem 1.5rem;}
-  h2 { font-size: 1.25rem; font-weight: 500; color: #1a1c1f; margin-top: 0; margin-bottom: 1.5rem; letter-spacing: 0.01em;}
+  .header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; }
+  h2 { font-size: 1.25rem; font-weight: 500; color: #1a1c1f; margin: 0; }
+  .current-readings { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+  .reading-card { background: #f8f9fa; padding: 0.8rem 1.2rem; border-radius: 8px; border-left: 4px solid; }
+  .reading-card.aqi { border-left-color: #9c27b0; min-width: 140px; }
+  .reading-card.ppm { border-left-color: #3b82f6; }
+  .reading-card.temp { border-left-color: #db4437; }
+  .reading-card.humid { border-left-color: #27ae60; }
+  .reading-label { font-size: 0.75rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
+  .reading-value { font-size: 1.5rem; font-weight: 700; margin-top: 0.2rem; }
+  .aqi-badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.7rem; font-weight: 600; color: white; margin-top: 0.3rem; }
   canvas { width: 100% !important; max-height: 350px !important; background: #fafbfc; border-radius: 8px; }
   .legend { font-size: 1rem; margin-top: .5rem; }
   .legend span { display: inline-block; margin-right: 1.5em; font-weight: 500; }
   .legend .blue { color: #3b82f6; }
   .legend .red   { color: #db4437; }
   .legend .green { color: #27ae60; }
+  .quality-indicators { display: flex; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap; font-size: 0.85rem; }
+  .quality-item { padding: 0.5rem 1rem; border-radius: 6px; font-weight: 500; }
+  .quality-good { background: #d4edda; color: #155724; }
+  .quality-moderate { background: #ffa726; color: #000000; }
+  .quality-poor { background: #f8d7da; color: #721c24; }
+  .quality-unhealthy { background: #f5c6cb; color: #721c24; }
+  .quality-verybad { background: #d6d8db; color: #383d41; }
+  .aqi-note { font-size: 0.75rem; color: #666; margin-top: 0.5rem; font-style: italic; }
   .download-btn {
     display: inline-block;
     margin: 1rem auto 2rem 0;  padding: 10px 26px; font-size: 1.1rem; background: #0860ca; color: white; font-weight: bold;
@@ -79,26 +126,70 @@ void handleRoot() {
     transition: background 0.2s;
   }
   .download-btn:hover { background: #084887; }
-  @media (max-width: 700px) {
+  @media (max-width: 768px) {
+    .header-container { flex-direction: column; align-items: flex-start; }
+    .authors { text-align: left; margin-top: 0.5rem; font-size: 0.9rem; }
+    .title { font-size: 2rem; }
     main, .panel { padding: 1rem 3vw; }
+    .header-row { flex-direction: column; align-items: flex-start; }
+    .current-readings { width: 100%; margin-top: 1rem; }
   }
 </style>
 </head>
 <body>
-<header>Garv Malik's ESP32 Clean Sensor Dashboard</header>
+<header>
+  <div class="header-container">
+    <div class="title-section">
+      <div class="title"><strong>A.T.M.O.S</strong></div>
+      <div class="subtitle">Atmospheric Measurement and Observation System</div>
+    </div>
+    <div class="authors">
+      <strong>by Garv Malik and Elisha Mishra<br>G.D.G.P.S (Karkardooma)</strong>
+    </div>
+  </div>
+</header>
 <main>
   <div class="panel">
-    <h2>Performance Trends</h2>
+    <div class="header-row">
+      <h2>Performance Trends</h2>
+      <div class="current-readings">
+        <div class="reading-card aqi">
+          <div class="reading-label">Estimated AQI</div>
+          <div class="reading-value" id="currentAQI">--</div>
+          <div class="aqi-badge" id="aqiBadge">Loading...</div>
+        </div>
+        <div class="reading-card ppm">
+          <div class="reading-label">Air Quality</div>
+          <div class="reading-value" id="currentPPM">-- PPM</div>
+        </div>
+        <div class="reading-card temp">
+          <div class="reading-label">Temperature</div>
+          <div class="reading-value" id="currentTemp">-- °C</div>
+        </div>
+        <div class="reading-card humid">
+          <div class="reading-label">Humidity</div>
+          <div class="reading-value" id="currentHumid">-- %</div>
+        </div>
+      </div>
+    </div>
     <canvas id="allTrendsChart"></canvas>
     <div class="legend">
-      <span class="blue">&#11044; Air Quality</span>
+      <span class="blue">&#11044; Air Quality (PPM)</span>
       <span class="red">&#11044; Temperature (°C)</span>
       <span class="green">&#11044; Humidity (%)</span>
     </div>
+    <div class="quality-indicators">
+      <div class="quality-item quality-good">Good: &lt; 400 PPM (AQI 0-50)</div>
+      <div class="quality-item quality-moderate">Moderate: 400-1000 PPM (AQI 51-100)</div>
+      <div class="quality-item quality-poor">Poor: 1000-2000 PPM (AQI 101-150)</div>
+      <div class="quality-item quality-unhealthy">Unhealthy: 2000-5000 PPM (AQI 151-200)</div>
+      <div class="quality-item quality-verybad">Very Bad: &gt; 5000 PPM (AQI 201+)</div>
+    </div>
+    <div class="aqi-note">* AQI is estimated based on gas sensor readings and is not an official government AQI measurement</div>
     <a href="/download" class="download-btn" download="sensor_data.csv">Download CSV Data</a>
   </div>
   <div class="panel">
-    <h2>Air Quality (MQ135)</h2>
+    <h2>Air Quality (PPM)</h2>
     <canvas id="mq135Chart"></canvas>
   </div>
   <div class="panel">
@@ -116,16 +207,44 @@ const mq135Ctx     = document.getElementById('mq135Chart').getContext('2d');
 const tempCtx      = document.getElementById('tempChart').getContext('2d');
 const humidCtx     = document.getElementById('humidityChart').getContext('2d');
 
+function getAQIFromPPM(ppm) {
+  if(ppm < 400) return Math.round((ppm / 400) * 50);
+  else if(ppm < 1000) return Math.round(51 + ((ppm - 400) / 600) * 49);
+  else if(ppm < 2000) return Math.round(101 + ((ppm - 1000) / 1000) * 49);
+  else if(ppm < 5000) return Math.round(151 + ((ppm - 2000) / 3000) * 49);
+  else if(ppm < 10000) return Math.round(201 + ((ppm - 5000) / 5000) * 99);
+  else return 301;
+}
+
+function getAQICategory(aqi) {
+  if(aqi <= 50) return 'Good';
+  else if(aqi <= 100) return 'Moderate';
+  else if(aqi <= 150) return 'Unhealthy for Sensitive';
+  else if(aqi <= 200) return 'Unhealthy';
+  else if(aqi <= 300) return 'Very Unhealthy';
+  else return 'Hazardous';
+}
+
+function getAQIColor(aqi) {
+  if(aqi <= 50) return '#00e400';
+  else if(aqi <= 100) return '#ffb300';
+  else if(aqi <= 150) return '#ff7e00';
+  else if(aqi <= 200) return '#ff0000';
+  else if(aqi <= 300) return '#8f3f97';
+  else return '#7e0023';
+}
+
 const allTrendsChart = new Chart(allTrendsCtx, {
   type: 'line',
   data: {
     labels: [],
     datasets: [
       {
-        label: 'Air Quality',
-        yAxisID: "y", // left axis
+        label: 'Air Quality (PPM)',
+        yAxisID: "y",
         borderColor: '#3b82f6',
         backgroundColor: 'rgba(59,130,246,0.125)',
+        borderDash: [5,5],
         data: [],
         fill: false,
         tension: 0.38,
@@ -136,7 +255,7 @@ const allTrendsChart = new Chart(allTrendsCtx, {
       },
       {
         label: 'Temperature (°C)',
-        yAxisID: "y1", // right axis
+        yAxisID: "y1",
         borderColor: '#db4437',
         backgroundColor: 'rgba(219,68,55,0.13)',
         data: [],
@@ -149,7 +268,7 @@ const allTrendsChart = new Chart(allTrendsCtx, {
       },
       {
         label: 'Humidity (%)',
-        yAxisID: "y1", // right axis
+        yAxisID: "y1",
         borderColor: '#27ae60',
         backgroundColor: 'rgba(39,174,96,0.13)',
         data: [],
@@ -164,6 +283,10 @@ const allTrendsChart = new Chart(allTrendsCtx, {
   },
   options: {
     responsive: true,
+    animation: {
+      progressive: true,
+      easing: 'easeOutQuart'
+    },
     plugins: {
       legend: { display: false },
       tooltip: { mode: 'index', intersect: false }
@@ -176,7 +299,7 @@ const allTrendsChart = new Chart(allTrendsCtx, {
         grid: { color: "#ececec", borderColor: "#ececec" }
       },
       y: {
-        position: 'left', title: {display:true, text:"AQ Sensor", padding:2, color:'#3b82f6', font:{weight:'bold'}},
+        position: 'left', title: {display:true, text:"Air Quality (PPM)", padding:2, color:'#3b82f6', font:{weight:'bold'}},
         grid: { color: "#ececec", },
         ticks: { color: "#3b82f6", maxTicksLimit:7 }
       },
@@ -206,6 +329,10 @@ function makeSingleLineChart(ctx, label, color) {
     }]},
     options: {
       responsive: true,
+      animation: {
+        progressive: true,
+        easing: 'easeOutQuart'
+      },
       plugins: {
         legend: { display: false },
         tooltip: { mode: 'index', intersect: false }
@@ -217,7 +344,7 @@ function makeSingleLineChart(ctx, label, color) {
     }
   });
 }
-const mq135Chart = makeSingleLineChart(mq135Ctx, "Air Quality", "#3b82f6");
+const mq135Chart = makeSingleLineChart(mq135Ctx, "Air Quality (PPM)", "#3b82f6");
 const tempChart  = makeSingleLineChart(tempCtx, "Temperature (°C)", "#db4437");
 const humidChart = makeSingleLineChart(humidCtx, "Humidity (%)", "#27ae60");
 
@@ -232,6 +359,20 @@ async function fetchSensorData() {
     const mq135Val = parseFloat(parts[1]);
     const tempVal = parseFloat(parts[2]);
     const humidVal = parseFloat(parts[3]);
+    
+    const aqi = getAQIFromPPM(mq135Val);
+    const aqiCategory = getAQICategory(aqi);
+    const aqiColor = getAQIColor(aqi);
+    
+    document.getElementById('currentAQI').textContent = aqi;
+    document.getElementById('currentPPM').textContent = mq135Val.toFixed(1) + ' PPM';
+    document.getElementById('currentTemp').textContent = tempVal.toFixed(1) + ' °C';
+    document.getElementById('currentHumid').textContent = humidVal.toFixed(0) + ' %';
+    
+    const badge = document.getElementById('aqiBadge');
+    badge.textContent = aqiCategory;
+    badge.style.backgroundColor = aqiColor;
+    
     let keep = 30;
 
     if (allTrendsChart.data.labels.length >= keep) {
@@ -269,7 +410,15 @@ void handleSensor() {
     temperature = 0;
     humidity = 0;
   }
-  int mq135Value = analogRead(mq135Pin);
+  
+  int mq135AnalogValue = analogRead(mq135Pin);
+  float mq135PPM = getPPM(mq135AnalogValue);
+  
+  Serial.print("Analog: ");
+  Serial.print(mq135AnalogValue);
+  Serial.print(" -> PPM: ");
+  Serial.println(mq135PPM);
+  
   struct tm timeinfo;
   char timestamp[24];
   if (!getLocalTime(&timeinfo)) {
@@ -278,11 +427,12 @@ void handleSensor() {
     unsigned long seconds = totalSeconds % 60;
     sprintf(timestamp, "%02lu:%02lu", minutes, seconds);
   } else {
-    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M", &timeinfo); // Date (hour:minute)
+    strftime(timestamp, sizeof(timestamp), "%y-%m-%d %H:%M:%S", &timeinfo);
   }
-  String dataLine = String(timestamp) + "," + String(mq135Value) + "," + String(temperature, 1) + "," + String(humidity, 0) + "\n";
+  
+  String dataLine = String(timestamp) + "," + String(mq135PPM, 1) + "," + String(temperature, 1) + "," + String(humidity, 0) + "\n";
   appendDataToFile(dataLine);
-  server.send(200, "text/plain", String(timestamp) + "," + String(mq135Value) + "," + String(temperature, 1) + "," + String(humidity, 0));
+  server.send(200, "text/plain", String(timestamp) + "," + String(mq135PPM, 1) + "," + String(temperature, 1) + "," + String(humidity, 0));
 }
 
 void handleDownload() {
@@ -310,19 +460,36 @@ void setup() {
   Serial.print("Connected! IP Address: ");
   Serial.println(WiFi.localIP());
 
+  if (MDNS.begin("garv")) {
+    Serial.println("mDNS started: http://garv.local");
+  }
+
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   Serial.println("Waiting for time sync...");
   struct tm timeinfo;
-  while (!getLocalTime(&timeinfo)) {
+  int timeout = 0;
+  while (!getLocalTime(&timeinfo) && timeout < 20) {
     Serial.print(".");
     delay(500);
+    timeout++;
   }
-  Serial.println("\nTime synced.");
+  if (timeout >= 20) {
+    Serial.println("\nTime sync failed");
+  } else {
+    Serial.println("\nTime synced.");
+  }
 
   server.on("/", handleRoot);
   server.on("/sensor", handleSensor);
   server.on("/download", handleDownload);
   server.begin();
+  
+  MDNS.addService("http", "tcp", 80);
+  
+  Serial.println("Server started!");
+  Serial.print("Access at: http://");
+  Serial.print(WiFi.localIP());
+  Serial.println(" or http://garv.local");
 }
 
 void loop() {
